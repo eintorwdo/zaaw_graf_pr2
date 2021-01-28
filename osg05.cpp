@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <chrono>
 #include <cmath>
+#include <ctime>
 
 #include <osg/Geometry>
 #include <osg/Geode>
@@ -25,19 +26,79 @@ float v = 55;
 float g = 9.81;
 float t = 0;
 
+osg::AnimationPath * createPath(osg::MatrixTransform * mt){
+    osg::ref_ptr<osg::AnimationPath> path = new osg::AnimationPath;
+    path->setLoopMode(osg::AnimationPath::NO_LOOPING);
+    osg::BoundingSphere sp = mt->computeBound();
+    osg::Quat qt1 = osg::Quat((90-latAngle)*M_PI/180, osg::Vec3(0,0,1));
+    osg::Quat qt2 = osg::Quat(M_PI/2, osg::Vec3(0,1,0));
+    osg::Vec3 center = sp.center();
+    osg::Vec3 scale = osg::Vec3(3,3,3);
+    osg::Vec3 pos = osg::Vec3(center.x(), center.y(), center.z()-sp.radius());
+    path->insert(0,osg::AnimationPath::ControlPoint(pos, qt1, scale));
+    path->insert(0.3,osg::AnimationPath::ControlPoint(pos, qt2*qt1, scale));
+    return path.release();
+}
+
+class BowlingPin{
+    osg::MatrixTransform * pinT;
+    osg::MatrixTransform * cannonBall;
+    osg::AnimationPathCallback * apcb;
+    bool fallen;
+
+    public:
+        BowlingPin(osg::MatrixTransform * pinT, osg::MatrixTransform * cannonBall, osg::AnimationPathCallback * apcb){
+            this->pinT = pinT;
+            this->cannonBall = cannonBall;
+            this->apcb = apcb;
+            fallen = false;
+        }
+
+        void checkForIntersection(){
+            if(!fallen){
+                osg::BoundingSphere sphere1 = pinT->computeBound();
+                osg::BoundingSphere sphere2 = cannonBall->computeBound();
+                osg::Vec3 pinCtr = sphere1.center();
+                osg::Vec3 ballCtr = sphere2.center();
+                
+                float distance = std::sqrt(std::pow(pinCtr.x()-ballCtr.x(),2)+std::pow(pinCtr.y()-ballCtr.y(),2)+std::pow(pinCtr.z()-ballCtr.z(),2));
+
+                if(distance < sphere1.radius() + sphere2.radius()){
+                    apcb->setPause(false);
+                    apcb->setAnimationPath(createPath(pinT));
+                    fallen = true;
+                }
+            }
+        }
+
+        void reset(){
+            if(fallen){
+                // std::cout<<"EEEEEEEEEEEEE"<<std::endl;
+                apcb->setPause(true);
+                int x = std::rand() % 200 + 100;
+                int y = std::rand() % 101 + (-50);
+                pinT->setMatrix(osg::Matrix::scale(3,3,3)*osg::Matrix::translate(x, y, 0));
+                apcb->reset();
+                fallen = false;
+            }
+        }
+};
+
 class BallSimulation{
     osg::MatrixTransform* cannonBall;
     osg::MatrixTransform* cannon;
     osg::MatrixTransform* cannonAndBall;
+    BowlingPin * bp;
     double initialZ;
     double initialY;
     double initialX;
 
     public:
-        BallSimulation(osg::MatrixTransform* cannonBall, osg::MatrixTransform * cannonAndBall, osg::MatrixTransform * cannon){
+        BallSimulation(osg::MatrixTransform* cannonBall, osg::MatrixTransform * cannonAndBall, osg::MatrixTransform * cannon, BowlingPin * bp){
             this->cannonBall = cannonBall;
             this->cannonAndBall = cannonAndBall;
             this->cannon = cannon;
+            this->bp = bp;
             osg::Matrix matrix = cannonBall->getMatrix();
             osg::Vec3f trans;
             osg::Quat rot;
@@ -85,7 +146,8 @@ class BallSimulation{
                     matrix.makeTranslate(osg::Vec3f(x, y, z));
                     cannonBall->setMatrix(matrix);
                     cannonBall->getOrCreateStateSet()->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
-                    t = t + 0.013;
+                    t = t + 0.05;
+                    bp->checkForIntersection();
                 }
                 else{
                     t = 0;
@@ -103,6 +165,7 @@ class BallSimulation{
                 cannonBall->getOrCreateStateSet()->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
                 cannonBall->setMatrix(matrix);
                 updateZ();
+                bp->reset();
             }
         }
 };
@@ -116,6 +179,13 @@ class KeyHandler : public osgGA::GUIEventHandler{
 
         virtual bool handle(const osgGA::GUIEventAdapter& ea, osgGA::GUIActionAdapter& aa){
             osg::Matrix matrix;
+            osgViewer::Viewer* viewer = dynamic_cast<osgViewer::Viewer*>(&aa);
+            osg::Vec3 eye;
+            osg::Vec3 center;
+            osg::Vec3 up;
+            osg::Vec3 center2(1.5, 0, 1.5);
+            osg::Vec3 up2(0, 0, 1.0);
+            viewer->getCamera()->getViewMatrixAsLookAt( eye, center, up );
 
             switch(ea.getEventType()){
                 case(osgGA::GUIEventAdapter::KEYDOWN):{
@@ -134,33 +204,41 @@ class KeyHandler : public osgGA::GUIEventHandler{
                                 cannonAndBall->getOrCreateStateSet()->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
                                 cannonAndBall->setMatrix(matrix);
                                 bs->resetBall();
+                                eye.set(osg::Vec3(-200,0,45));
+                                viewer->getCamera()->setViewMatrixAsLookAt(eye, osg::Vec3(0,0,0), osg::Vec3(0,0,1));
                             }
                             break;
                         case 65361:{
                                 if(fire == false){
-                                    latAngle = std::fmax(20,latAngle - 1);
+                                    latAngle = std::fmax(20,latAngle - 0.5);
                                     matrix = osg::Matrix::translate(10,0,0)*osg::Matrix::rotate(-angle*M_PI/180, osg::Vec3f(0,1,0))*osg::Matrix::rotate((-latAngle+90)*M_PI/180, osg::Vec3f(0,0,1.0))*osg::Matrix::translate(-10,0,0);
                                     cannonAndBall->getOrCreateStateSet()->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
                                     cannonAndBall->setMatrix(matrix);
                                     bs->updateZ();
+                                    if(latAngle > 20){
+                                        eye.set((eye.x())*cos(0.5*M_PI/180)-eye.y()*sin(0.5*M_PI/180), (eye.x())*sin(0.5*M_PI/180)+eye.y()*cos(0.5*M_PI/180), eye.z());
+                                        viewer->getCamera()->setViewMatrixAsLookAt(eye, osg::Vec3(0,0,0), osg::Vec3(0,0,1));
+                                    }
                                 }
                             }
                             break;
                         case 65363:{
                                 if(fire == false){
-                                    latAngle = std::fmin(160,latAngle + 1);
-                                    // matrix = osg::Matrix::rotate(-angle*M_PI/180, osg::Vec3f(0,1,0))*osg::Matrix::translate(0,0,0.15*angle)*osg::Matrix::rotate((-latAngle+90)*M_PI/180, osg::Vec3f(0,0,1.0));
+                                    latAngle = std::fmin(160,latAngle + 0.5);
                                     matrix = osg::Matrix::translate(10,0,0)*osg::Matrix::rotate(-angle*M_PI/180, osg::Vec3f(0,1,0))*osg::Matrix::rotate((-latAngle+90)*M_PI/180, osg::Vec3f(0,0,1.0))*osg::Matrix::translate(-10,0,0);
                                     cannonAndBall->getOrCreateStateSet()->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
                                     cannonAndBall->setMatrix(matrix);
                                     bs->updateZ();
+                                    if(latAngle < 160){
+                                        eye.set((eye.x())*cos(-0.5*M_PI/180)-eye.y()*sin(-0.5*M_PI/180), (eye.x())*sin(-0.5*M_PI/180)+eye.y()*cos(-0.5*M_PI/180), eye.z());
+                                        viewer->getCamera()->setViewMatrixAsLookAt(eye, osg::Vec3(0,0,0), osg::Vec3(0,0,1));
+                                    }
                                 }
                             }
                             break;
                         case 65362:{
                                 if(fire == false){
-                                    angle = std::fmin(50,angle + 1);
-                                    // matrix = osg::Matrix::rotate(-angle*M_PI/180, osg::Vec3f(0,1,0))*osg::Matrix::translate(0,0,0.15*angle)*osg::Matrix::rotate((-latAngle+90)*M_PI/180, osg::Vec3f(0,0,1.0));
+                                    angle = std::fmin(50,angle + 0.5);
                                     matrix = osg::Matrix::translate(10,0,0)*osg::Matrix::rotate(-angle*M_PI/180, osg::Vec3f(0,1,0))*osg::Matrix::rotate((-latAngle+90)*M_PI/180, osg::Vec3f(0,0,1.0))*osg::Matrix::translate(-10,0,0);
                                     cannonAndBall->getOrCreateStateSet()->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
                                     cannonAndBall->setMatrix(matrix);
@@ -170,8 +248,7 @@ class KeyHandler : public osgGA::GUIEventHandler{
                             break;
                         case 65364:{
                                 if(fire == false){
-                                    angle = std::fmax(0,angle - 1);
-                                    // matrix = osg::Matrix::rotate(-angle*M_PI/180, osg::Vec3f(0,1,0))*osg::Matrix::translate(0,0,0.15*angle)*osg::Matrix::rotate((-latAngle+90)*M_PI/180, osg::Vec3f(0,0,1.0));
+                                    angle = std::fmax(0,angle - 0.5);
                                     matrix = osg::Matrix::translate(10,0,0)*osg::Matrix::rotate(-angle*M_PI/180, osg::Vec3f(0,1,0))*osg::Matrix::rotate((-latAngle+90)*M_PI/180, osg::Vec3f(0,0,1.0))*osg::Matrix::translate(-10,0,0);
                                     cannonAndBall->getOrCreateStateSet()->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
                                     cannonAndBall->setMatrix(matrix);
@@ -195,18 +272,18 @@ class KeyHandler : public osgGA::GUIEventHandler{
         osg::MatrixTransform * cannonAndBall;
 };
 
+
 auto stworz_scene()
 {
     const int ReceivesShadowTraversalMask = 0x1;
     const int CastsShadowTraversalMask = 0x2;
 
     auto scn = new osgShadow::ShadowedScene();
-    // auto scn = new osg::Group();
 
     // swiatlo
     osg::ref_ptr<osg::LightSource> lightSource(new osg::LightSource());                                 
     lightSource->getLight()->setLightNum(0);                             
-    lightSource->getLight()->setPosition(osg::Vec4(0.0, 0.0, 100.0, 1.0));
+    lightSource->getLight()->setPosition(osg::Vec4(0.0, 0.0, 200.0, 1.0));
     lightSource->getLight()->setAmbient(osg::Vec4(1, 1, 1.0, 1.0));
     lightSource->getLight()->setDirection(osg::Vec3(0.0, 0.0, 0.0));
 
@@ -270,7 +347,7 @@ auto stworz_scene()
     osg::Geode * geom_node = new osg::Geode();
     osg::ShapeDrawable * drw = new osg::ShapeDrawable();
     drw->setShape(new osg::Sphere(osg::Vec3(0, 0.0, 0), 0.7));
-    texture = new osg::Texture2D(osgDB::readImageFile("wood.jpg"));
+    texture = new osg::Texture2D(osgDB::readImageFile("stone.jpg"));
     drw -> getOrCreateStateSet() -> setTextureAttributeAndModes(0, texture.get());
     geom_node->addDrawable(drw);
     // cien
@@ -282,22 +359,41 @@ auto stworz_scene()
 
     scn->addChild(t);
 
-    // cannonAndBall->addChild(t);
     cannonT->setMatrix(osg::Matrix::rotate(-angle*M_PI/180, osg::Vec3f(0,1,0))*osg::Matrix::translate(0,0,0.15*angle));
     cannonT->getOrCreateStateSet()->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
     scn->addChild(cannonT);
 
-    return std::make_tuple(scn, t, cannonT, t2);
+    // kregle
+    osg::Node * pin = osgDB::readNodeFile("pin.obj");
+    osg::MatrixTransform * pinT = new osg::MatrixTransform();
+    int x = std::rand() % 200 + 100;
+    int y = std::rand() % 101 + (-50);
+    pinT->setMatrix(osg::Matrix::scale(3,3,3)*osg::Matrix::translate(x, y, 0));
+    pinT->getOrCreateStateSet()->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
+    pinT->addChild(pin);
+    // animacja upadku
+    osg::ref_ptr<osg::AnimationPathCallback> apcb = new osg::AnimationPathCallback;
+    apcb->setPause(true);
+    apcb->setAnimationPath(createPath(pinT));
+    pinT->setUpdateCallback(apcb.get());
+
+    scn->addChild(pinT);
+
+    return std::make_tuple(scn, t, cannonT, t2, pinT, apcb);
 }
 
 int main(int argc, char * argv[])
 {
+    srand((unsigned) time(0));
     auto tup = stworz_scene();
     osg::Node* scn = std::get<0>(tup);
     osg::MatrixTransform* cannonBall = std::get<1>(tup);
     osg::MatrixTransform* cannonT = std::get<2>(tup);
     osg::MatrixTransform* cannon = std::get<3>(tup);
-    BallSimulation * bs = new BallSimulation(cannonBall, cannonT, cannon);
+    osg::MatrixTransform* pinT = std::get<4>(tup);
+    osg::AnimationPathCallback * apcb = std::get<5>(tup);
+    BowlingPin * bp = new BowlingPin(pinT, cannonBall, apcb);
+    BallSimulation * bs = new BallSimulation(cannonBall, cannonT, cannon, bp);
     KeyHandler * kh1 = new KeyHandler(bs, cannonT);
     osgViewer::Viewer viewer;
     viewer.setUpViewInWindow(200, 200, 800, 600);
@@ -308,7 +404,7 @@ int main(int argc, char * argv[])
     osg::Vec3d center( 0.0, 0.0, 0.0 );
     osg::Vec3d up( 0.0, 0.0, 1.0 );
 
-    // viewer.setCameraManipulator (NULL);
+    viewer.setCameraManipulator (NULL);
     viewer.getCamera()->setViewMatrixAsLookAt( eye, center, up );
 
     while(!viewer.done()){
