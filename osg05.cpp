@@ -76,13 +76,11 @@ class BowlingPin{
         }
 
         void reset(){
-            if(fallen){
-                apcb->setPause(true);
-                std::vector<int> coords = generateRandomCoords();
-                pinT->setMatrix(osg::Matrix::scale(3,3,3)*osg::Matrix::translate(coords[0], coords[1], 0));
-                apcb->reset();
-                fallen = false;
-            }
+            apcb->setPause(true);
+            std::vector<int> coords = generateRandomCoords();
+            pinT->setMatrix(osg::Matrix::scale(3,3,3)*osg::Matrix::translate(coords[0], coords[1], 0));
+            apcb->reset();
+            fallen = false;
         }
 
         bool isFallen(){
@@ -157,6 +155,8 @@ class BallSimulation{
                 }
                 else{
                     t = 0;
+                    fire = false;
+                    resetBall();
                 }
             }
         }
@@ -175,19 +175,22 @@ class BallSimulation{
             return true;
         }
 
+        void resetPins(){
+            for(auto pin = pins.begin(); pin != pins.end(); pin++){
+                (*pin)->reset();
+            }
+        }
+
+        void resetCannon(){
+            osg::Matrix matrix = updateCannonRotation();
+            cannonT->setMatrix(matrix);
+        }
+
         void resetBall(){
             if(fire == false){
-                std::cout << "reset" << std::endl;
-                cannon->setMatrix(osg::Matrix::rotate(-latAngle*M_PI/180, osg::Vec3f(0,0,1.0))*osg::Matrix::scale(osg::Vec3f(4.5,4.5,4.5)));
-                cannonT->setMatrix(osg::Matrix::rotate(-angle*M_PI/180, osg::Vec3f(0,1,0))*osg::Matrix::translate(0,0,0.15*angle));
-                osg::Matrix matrix;
-                matrix.makeTranslate(osg::Vec3f(-0.7, 0, 9.6));
-                cannonBall->setMatrix(matrix);
                 setInitialCoords();
                 if(areAllPinsFallen()){
-                    for(auto pin = pins.begin(); pin != pins.end(); pin++){
-                        (*pin)->reset();
-                    }
+                    resetPins();
                 }
             }
         }
@@ -238,7 +241,7 @@ class KeyHandler : public osgGA::GUIEventHandler{
             switch(ea.getEventType()){
                 case(osgGA::GUIEventAdapter::KEYDOWN):{
                     switch(ea.getKey()){
-                        case 'a' : case 'A':{
+                        case 32:{
                                 fire = true;
                             }
                             break;
@@ -248,6 +251,8 @@ class KeyHandler : public osgGA::GUIEventHandler{
                                 angle = 0;
                                 latAngle = 90;
                                 bs->resetBall();
+                                bs->resetPins();
+                                bs->resetCannon();
                                 eye.set(osg::Vec3(-200,0,45));
                                 viewer->getCamera()->setViewMatrixAsLookAt(eye, osg::Vec3(0,0,0), osg::Vec3(0,0,1));
                             }
@@ -332,6 +337,7 @@ auto stworz_scene(){
     osg::ref_ptr<osg::Vec3Array> normals = new osg::Vec3Array;
     normals->push_back(osg::Vec3(0.0f, 0.0f, 1.0f));
     osg::ref_ptr<osg::Geometry>geom = new osg::Geometry;
+    geom->getOrCreateStateSet()->setMode(GL_LINE_SMOOTH, osg::StateAttribute::ON);
     geom->setVertexArray(vertices.get());
     geom->setNormalArray((normals.get()));
     geom->setNormalBinding((osg::Geometry::BIND_OVERALL));
@@ -344,7 +350,7 @@ auto stworz_scene(){
     (*texcoords)[2].set(55.0f, 55.0f);
     (*texcoords)[3].set(0.0f, 55.0f);
     geom->setTexCoordArray(0,texcoords);
-    osg::ref_ptr<osg::Texture2D> texture = new osg::Texture2D(osgDB::readImageFile("grass.jpg"));
+    osg::ref_ptr<osg::Texture2D> texture = new osg::Texture2D(osgDB::readImageFile("textures/grass3.jpg"));
     texture->setWrap( osg::Texture::WRAP_S, osg::Texture::REPEAT ); 
     texture->setWrap( osg::Texture::WRAP_R, osg::Texture::REPEAT );
     texture->setWrap( osg::Texture::WRAP_T, osg::Texture::REPEAT ); 
@@ -361,6 +367,7 @@ auto stworz_scene(){
 
     // armata
     osg::Node * cannon = osgDB::readNodeFile("cannon.obj");
+    cannon->getOrCreateStateSet()->setMode(GL_LINE_SMOOTH, osg::StateAttribute::ON);
     t2->setMatrix(osg::Matrix::rotate(-latAngle*M_PI/180, osg::Vec3f(0,0,1.0))*osg::Matrix::scale(osg::Vec3f(4.5,4.5,4.5)));
     t2->getOrCreateStateSet()->setMode(GL_NORMALIZE, osg::StateAttribute::ON);
     t2->addChild(cannon);
@@ -373,8 +380,9 @@ auto stworz_scene(){
     // kula armatnia
     osg::Geode * geom_node = new osg::Geode();
     osg::ShapeDrawable * drw = new osg::ShapeDrawable();
+    drw->getOrCreateStateSet()->setMode(GL_LINE_SMOOTH, osg::StateAttribute::ON);
     drw->setShape(new osg::Sphere(osg::Vec3(0, 0.0, 0), 0.7));
-    texture = new osg::Texture2D(osgDB::readImageFile("stone.jpg"));
+    texture = new osg::Texture2D(osgDB::readImageFile("textures/stone.jpg"));
     drw -> getOrCreateStateSet() -> setTextureAttributeAndModes(0, texture.get());
     geom_node->addDrawable(drw);
     // cien
@@ -388,6 +396,7 @@ auto stworz_scene(){
     // kregle
     std::vector<BowlingPin *> pins;
     osg::Node * pin = osgDB::readNodeFile("pin.obj");
+    pin->getOrCreateStateSet()->setMode(GL_LINE_SMOOTH, osg::StateAttribute::ON);
     for(int i=0;i<10;i++){
         osg::MatrixTransform * pinT = new osg::MatrixTransform();
         std::vector<int> coords = generateRandomCoords();
