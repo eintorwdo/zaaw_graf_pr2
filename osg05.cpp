@@ -156,7 +156,7 @@ class BallSimulation{
                 else{
                     t = 0;
                     fire = false;
-                    resetBall();
+                    // resetBall();
                 }
             }
         }
@@ -242,7 +242,10 @@ class KeyHandler : public osgGA::GUIEventHandler{
                 case(osgGA::GUIEventAdapter::KEYDOWN):{
                     switch(ea.getKey()){
                         case 32:{
-                                fire = true;
+                                if(fire == false){
+                                    bs->resetBall();
+                                    fire = true;
+                                }
                             }
                             break;
                         case 'r' : case 'R':{
